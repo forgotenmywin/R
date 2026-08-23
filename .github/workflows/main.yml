@@ -1,14 +1,14 @@
 name: Tailscale Test
 
 on:
-  workflow_dispatch:
+  push:
 
 jobs:
   test:
     runs-on: ubuntu-latest
 
     steps:
-      - name: System info
+      - name: Check network
         run: |
           whoami
           uname -a
@@ -34,12 +34,12 @@ jobs:
             --auth-key="${{ secrets.TS_AUTHKEY }}" \
             --hostname="github-actions-test"
 
-      - name: Tailscale status
+      - name: Check Tailscale
         run: |
           sudo tailscale status
           sudo tailscale ip
 
-      - name: Internet test
+      - name: Test Internet
         run: |
           curl -4 https://ifconfig.me
           echo
