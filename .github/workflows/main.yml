@@ -1,0 +1,45 @@
+name: Tailscale Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: System info
+        run: |
+          whoami
+          uname -a
+          echo "=== TUN ==="
+          ls -l /dev/net/tun || true
+          echo "=== IP Forwarding ==="
+          cat /proc/sys/net/ipv4/ip_forward
+          echo "=== Interfaces ==="
+          ip addr
+          echo "=== Routes ==="
+          ip route
+
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+          tailscale version
+
+      - name: Start Tailscale
+        run: |
+          sudo tailscaled &
+          sleep 3
+          sudo tailscale up \
+            --auth-key="${{ secrets.TS_AUTHKEY }}" \
+            --hostname="github-actions-test"
+
+      - name: Tailscale status
+        run: |
+          sudo tailscale status
+          sudo tailscale ip
+
+      - name: Internet test
+        run: |
+          curl -4 https://ifconfig.me
+          echo
