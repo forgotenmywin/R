@@ -1,22 +1,23 @@
-name: Tailscale Test
+name: Tailscale Exit Node Test
 
 on:
-  push:
+  workflow_dispatch:
 
 jobs:
-  test:
+  exit-node:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
-      - name: Check network
+      - name: Check system
         run: |
           whoami
           uname -a
           echo "=== TUN ==="
           ls -l /dev/net/tun || true
-          echo "=== IP Forwarding ==="
+          echo "=== IP forwarding ==="
           cat /proc/sys/net/ipv4/ip_forward
-          echo "=== Interfaces ==="
+          echo "=== IP ==="
           ip addr
           echo "=== Routes ==="
           ip route
@@ -26,20 +27,31 @@ jobs:
           curl -fsSL https://tailscale.com/install.sh | sh
           tailscale version
 
-      - name: Start Tailscale
+      - name: Connect as Exit Node
         run: |
-          sudo tailscaled &
-          sleep 3
           sudo tailscale up \
             --auth-key="${{ secrets.TS_AUTHKEY }}" \
-            --hostname="github-actions-test"
+            --hostname="github-actions-exit-node" \
+            --advertise-exit-node
 
-      - name: Check Tailscale
+      - name: Show Tailscale status
         run: |
-          sudo tailscale status
-          sudo tailscale ip
+          tailscale status
+          echo "=== Tailscale IP ==="
+          tailscale ip
+
+      - name: Show advertised routes
+        run: |
+          tailscale debug prefs
 
       - name: Test Internet
         run: |
+          echo "Public IP:"
           curl -4 https://ifconfig.me
           echo
+
+      - name: Keep Exit Node alive
+        run: |
+          echo "Exit Node is running..."
+          echo "Stop the workflow to destroy the temporary Exit Node."
+          sleep 1500
