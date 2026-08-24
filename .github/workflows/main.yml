@@ -6,7 +6,7 @@ on:
 jobs:
   exit-node:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 360
 
     steps:
       - name: Check system
@@ -54,4 +54,4 @@ jobs:
         run: |
           echo "Exit Node is running..."
           echo "Stop the workflow to destroy the temporary Exit Node."
-          sleep 1500
+          sleep 21600
