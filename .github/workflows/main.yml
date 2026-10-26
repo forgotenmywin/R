@@ -16,25 +16,34 @@ jobs:
       - name: Install Wine, Xvfb and 7-Zip
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            wine64 wine32 winbind \
-            xvfb p7zip-full
+          set -e
 
-          wine --version || true
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            wine \
+            wine64 \
+            winbind \
+            xvfb \
+            p7zip-full
+
+          wine --version
           7z
 
-      - name: Check available disk space
+      - name: Check disk space
         shell: bash
         run: |
           df -h
           free -h
 
-      - name: Download Unreal from existing Release
+      - name: Download Unreal Engine Release assets
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
         run: |
+          set -e
+
           mkdir -p "$RUNNER_TEMP/ue-parts"
 
           gh release download ue5.8 \
@@ -42,14 +51,33 @@ jobs:
             --pattern 'UE_5.8.zip.*' \
             --dir "$RUNNER_TEMP/ue-parts"
 
-          echo "Downloaded release assets:"
+          echo "Downloaded files:"
           ls -lh "$RUNNER_TEMP/ue-parts"
 
-          test -f "$RUNNER_TEMP/ue-parts/UE_5.8.zip.001"
+          if [ ! -f "$RUNNER_TEMP/ue-parts/UE_5.8.zip.001" ]; then
+            echo "ERROR: First archive part not found."
+            exit 1
+          fi
+
+      - name: Verify archive parts
+        shell: bash
+        run: |
+          set -e
+
+          echo "Archive part count:"
+          find "$RUNNER_TEMP/ue-parts" \
+            -maxdepth 1 -type f | wc -l
+
+          echo "Archive total size:"
+          du -sh "$RUNNER_TEMP/ue-parts"
+
+          df -h "$RUNNER_TEMP"
 
       - name: Extract Unreal Engine
         shell: bash
         run: |
+          set -e
+
           mkdir -p "$RUNNER_TEMP/ue"
 
           7z x \
@@ -57,41 +85,45 @@ jobs:
             "-o$RUNNER_TEMP/ue" \
             -y
 
-          echo "Searching for UnrealEditor.exe"
+          echo "Searching for UnrealEditor.exe..."
 
           find "$RUNNER_TEMP/ue" \
             -type f \
-            -iname UnrealEditor.exe \
+            -iname 'UnrealEditor.exe' \
             -print
 
-          df -h
+          df -h "$RUNNER_TEMP"
 
-      - name: Configure Wine
+      - name: Initialize Wine
         shell: bash
         run: |
+          set -e
+
           export WINEPREFIX="$RUNNER_TEMP/wineprefix"
           export WINEARCH=win64
+          export WINEDEBUG=-all
 
           xvfb-run -a wineboot --init
 
-          xvfb-run -a wine --version
+          wine --version
+          echo "Wine initialized."
 
-      - name: Test Unreal without rendering
+      - name: Test Unreal Engine without rendering
         shell: bash
         run: |
-          set +e
+          set -u
 
           EDITOR="$(find "$RUNNER_TEMP/ue" \
             -type f \
-            -iname UnrealEditor.exe \
+            -iname 'UnrealEditor.exe' \
             -print -quit)"
 
           if [ -z "$EDITOR" ]; then
-            echo "ERROR: UnrealEditor.exe was not found."
+            echo "ERROR: UnrealEditor.exe not found."
             exit 1
           fi
 
-          echo "Testing: $EDITOR"
+          echo "Editor path: $EDITOR"
 
           export WINEPREFIX="$RUNNER_TEMP/wineprefix"
           export WINEARCH=win64
@@ -100,6 +132,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ue-logs"
 
           cd "$(dirname "$EDITOR")"
+
+          set +e
 
           timeout 600s xvfb-run -a wine "$EDITOR" \
             -nullrhi \
@@ -112,18 +146,23 @@ jobs:
 
           RC=$?
 
-          echo "Unreal process exit code: $RC"
-          tail -n 150 "$RUNNER_TEMP/ue-logs/unreal.log"
+          set -e
+
+          echo "Exit code: $RC"
+          echo "Last 200 log lines:"
+          tail -n 200 "$RUNNER_TEMP/ue-logs/unreal.log"
 
           if [ "$RC" -eq 0 ]; then
-            echo "Unreal process exited successfully."
+            echo "Unreal process exited with code 0."
+          elif [ "$RC" -eq 124 ]; then
+            echo "Unreal timed out after 10 minutes."
           else
-            echo "Unreal failed, timed out, or exited with an error."
+            echo "Unreal exited with an error."
           fi
 
           exit "$RC"
 
-      - name: Upload Unreal logs
+      - name: Upload diagnostic logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
