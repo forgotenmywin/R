@@ -1,57 +1,132 @@
-name: Tailscale Exit Node Test
+
+name: Test Unreal Engine 5.8 with Wine Headless
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  exit-node:
-    runs-on: ubuntu-latest
+  test-unreal:
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
 
     steps:
-      - name: Check system
+      - name: Install Wine, Xvfb and 7-Zip
+        shell: bash
         run: |
-          whoami
-          uname -a
-          echo "=== TUN ==="
-          ls -l /dev/net/tun || true
-          echo "=== IP forwarding ==="
-          cat /proc/sys/net/ipv4/ip_forward
-          echo "=== IP ==="
-          ip addr
-          echo "=== Routes ==="
-          ip route
+          sudo apt-get update
+          sudo apt-get install -y \
+            wine64 wine32 winbind \
+            xvfb p7zip-full
 
-      - name: Install Tailscale
-        run: |
-          curl -fsSL https://tailscale.com/install.sh | sh
-          tailscale version
+          wine --version || true
+          7z
 
-      - name: Connect as Exit Node
+      - name: Check available disk space
+        shell: bash
         run: |
-          sudo tailscale up \
-            --auth-key="${{ secrets.TS_AUTHKEY }}" \
-            --hostname="github-actions-exit-node" \
-            --advertise-exit-node
+          df -h
+          free -h
 
-      - name: Show Tailscale status
+      - name: Download Unreal from existing Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          tailscale status
-          echo "=== Tailscale IP ==="
-          tailscale ip
+          mkdir -p "$RUNNER_TEMP/ue-parts"
 
-      - name: Show advertised routes
-        run: |
-          tailscale debug prefs
+          gh release download ue5.8 \
+            --repo forgotenmywin/Windows_with_no_vnc \
+            --pattern 'UE_5.8.zip.*' \
+            --dir "$RUNNER_TEMP/ue-parts"
 
-      - name: Test Internet
-        run: |
-          echo "Public IP:"
-          curl -4 https://ifconfig.me
-          echo
+          echo "Downloaded release assets:"
+          ls -lh "$RUNNER_TEMP/ue-parts"
 
-      - name: Keep Exit Node alive
+          test -f "$RUNNER_TEMP/ue-parts/UE_5.8.zip.001"
+
+      - name: Extract Unreal Engine
+        shell: bash
         run: |
-          echo "Exit Node is running..."
-          echo "Stop the workflow to destroy the temporary Exit Node."
-          sleep 21600
+          mkdir -p "$RUNNER_TEMP/ue"
+
+          7z x \
+            "$RUNNER_TEMP/ue-parts/UE_5.8.zip.001" \
+            "-o$RUNNER_TEMP/ue" \
+            -y
+
+          echo "Searching for UnrealEditor.exe"
+
+          find "$RUNNER_TEMP/ue" \
+            -type f \
+            -iname UnrealEditor.exe \
+            -print
+
+          df -h
+
+      - name: Configure Wine
+        shell: bash
+        run: |
+          export WINEPREFIX="$RUNNER_TEMP/wineprefix"
+          export WINEARCH=win64
+
+          xvfb-run -a wineboot --init
+
+          xvfb-run -a wine --version
+
+      - name: Test Unreal without rendering
+        shell: bash
+        run: |
+          set +e
+
+          EDITOR="$(find "$RUNNER_TEMP/ue" \
+            -type f \
+            -iname UnrealEditor.exe \
+            -print -quit)"
+
+          if [ -z "$EDITOR" ]; then
+            echo "ERROR: UnrealEditor.exe was not found."
+            exit 1
+          fi
+
+          echo "Testing: $EDITOR"
+
+          export WINEPREFIX="$RUNNER_TEMP/wineprefix"
+          export WINEARCH=win64
+          export WINEDEBUG=-all
+
+          mkdir -p "$RUNNER_TEMP/ue-logs"
+
+          cd "$(dirname "$EDITOR")"
+
+          timeout 600s xvfb-run -a wine "$EDITOR" \
+            -nullrhi \
+            -unattended \
+            -nop4 \
+            -nosplash \
+            -log \
+            '-ExecCmds=Quit' \
+            > "$RUNNER_TEMP/ue-logs/unreal.log" 2>&1
+
+          RC=$?
+
+          echo "Unreal process exit code: $RC"
+          tail -n 150 "$RUNNER_TEMP/ue-logs/unreal.log"
+
+          if [ "$RC" -eq 0 ]; then
+            echo "Unreal process exited successfully."
+          else
+            echo "Unreal failed, timed out, or exited with an error."
+          fi
+
+          exit "$RC"
+
+      - name: Upload Unreal logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unreal-wine-test-logs
+          path: ${{ runner.temp }}/ue-logs/
+          if-no-files-found: warn
